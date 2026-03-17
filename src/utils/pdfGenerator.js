@@ -1,5 +1,4 @@
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 
 export const generateAssessmentReport = async (assessment) => {
   const pdf = new jsPDF();

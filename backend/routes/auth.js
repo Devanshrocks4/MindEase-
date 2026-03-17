@@ -3,7 +3,8 @@ const { body, validationResult } = require('express-validator');
 const User = require('../models/User');
 const { generateToken } = require('../middleware/auth');
 
-const router = express.Router();
+module.exports = (io) => {
+  const router = express.Router();
 
 // @route   POST /api/auth/register
 // @desc    Register a new user
@@ -56,6 +57,9 @@ router.post('/register', [
     });
 
     await user.save();
+
+    // Emit to admin
+    io.to('admin').emit('newUser', { userId: user._id, name: user.name, email: user.email });
 
     // Generate token
     const token = generateToken(user._id);
@@ -166,4 +170,5 @@ router.post('/login', [
   }
 });
 
-module.exports = router;
+  return router;
+};

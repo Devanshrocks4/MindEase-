@@ -5,8 +5,6 @@ import { db, isFirebaseConfigured } from '../firebase';
 import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { getWellnessRecommendations } from '../data/assessmentData_complete';
-import { downloadPDF } from '../utils/pdfGenerator';
-import toast from 'react-hot-toast';
 
 const DashboardUpdated = () => {
   const { userId } = useAuth();
@@ -118,15 +116,7 @@ const DashboardUpdated = () => {
     });
   };
 
-  const handleDownloadPDF = async (assessment) => {
-    try {
-      await downloadPDF(assessment);
-      toast.success('PDF report downloaded successfully!');
-    } catch (error) {
-      console.error('Error downloading PDF:', error);
-      toast.error('Failed to download PDF report.');
-    }
-  };
+
 
   if (loading) {
     return (

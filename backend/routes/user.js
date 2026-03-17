@@ -8,7 +8,8 @@ const { generateAssessmentPDF } = require('../utils/pdfGenerator');
 const path = require('path');
 const fs = require('fs-extra');
 
-const router = express.Router();
+module.exports = (io) => {
+  const router = express.Router();
 
 // Apply authentication to all user routes
 router.use(authenticateToken);
@@ -98,6 +99,14 @@ router.post('/assessment/create', [
 
     const assessment = new Assessment(assessmentData);
     await assessment.save();
+
+    // Emit to admin
+    io.to('admin').emit('newAssessment', {
+      userId: req.user._id,
+      category: assessment.category,
+      score: assessment.wellnessIndex,
+      date: assessment.testDate
+    });
 
     // Update user dashboard
     await updateUserDashboard(req.user._id);
@@ -260,4 +269,5 @@ async function updateUserDashboard(userId) {
   }
 }
 
-module.exports = router;
+  return router;
+};

@@ -1,5 +1,5 @@
 const express = require('express');
-const { requireAdmin } = require('../middleware/auth');
+const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const User = require('../models/User');
 const Assessment = require('../models/Assessment');
 const UserDashboard = require('../models/UserDashboard');
@@ -8,21 +8,60 @@ const { generateUserReportPDF } = require('../utils/pdfGenerator');
 
 const router = express.Router();
 
-// Apply admin middleware to all admin routes
+// Apply authentication and admin middleware to all admin routes
+router.use(authenticateToken);
 router.use(requireAdmin);
 
 // @route   GET /api/admin/users
-// @desc    Get all users
+// @desc    Get all users with optional filtering
 // @access  Admin only
 router.get('/users', async (req, res) => {
   try {
-    const users = await User.find({ isActive: true })
-      .select('name email role lastLogin createdAt')
-      .sort({ createdAt: -1 });
+    const { search, role, status, page = 1, limit = 50 } = req.query;
+
+    let query = { isActive: true };
+
+    // Search filter
+    if (search) {
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Role filter
+    if (role && role !== 'all') {
+      query.role = role;
+    }
+
+    // Status filter
+    if (status) {
+      if (status === 'active') {
+        query.isActive = true;
+      } else if (status === 'inactive') {
+        query.isActive = false;
+      }
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const users = await User.find(query)
+      .select('name email role lastLogin createdAt isActive')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const total = await User.countDocuments(query);
 
     res.json({
       success: true,
-      data: users
+      data: users,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        pages: Math.ceil(total / parseInt(limit))
+      }
     });
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -189,6 +228,112 @@ router.get('/export/csv', async (req, res) => {
   }
 });
 
+// @route   GET /api/admin/online-users
+// @desc    Get online users
+// @access  Admin only
+router.get('/online-users', async (req, res) => {
+  try {
+    const onlineUsers = await User.find({ isOnline: true, isActive: true })
+      .select('name email lastLogin')
+      .sort({ lastLogin: -1 });
+
+    res.json({
+      success: true,
+      data: onlineUsers
+    });
+  } catch (error) {
+    console.error('Error fetching online users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching online users'
+    });
+  }
+});
+
+// @route   GET /api/admin/recent-users
+// @desc    Get recent registered users
+// @access  Admin only
+router.get('/recent-users', async (req, res) => {
+  try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentUsers = await User.find({
+      createdAt: { $gte: sevenDaysAgo },
+      isActive: true
+    })
+      .select('name email createdAt lastLogin')
+      .sort({ createdAt: -1 });
+
+    res.json({
+      success: true,
+      data: recentUsers
+    });
+  } catch (error) {
+    console.error('Error fetching recent users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching recent users'
+    });
+  }
+});
+
+// @route   GET /api/admin/recent-logins
+// @desc    Get recent user logins
+// @access  Admin only
+router.get('/recent-logins', async (req, res) => {
+  try {
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+    const recentLogins = await User.find({
+      lastLogin: { $gte: oneDayAgo },
+      isActive: true
+    })
+      .select('name email lastLogin')
+      .sort({ lastLogin: -1 });
+
+    res.json({
+      success: true,
+      data: recentLogins
+    });
+  } catch (error) {
+    console.error('Error fetching recent logins:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching recent logins'
+    });
+  }
+});
+
+// @route   GET /api/admin/recent-assessments
+// @desc    Get recent assessments
+// @access  Admin only
+router.get('/recent-assessments', async (req, res) => {
+  try {
+    const oneDayAgo = new Date();
+    oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+
+    const recentAssessments = await Assessment.find({
+      testDate: { $gte: oneDayAgo }
+    })
+      .populate('userId', 'name email')
+      .sort({ testDate: -1 });
+
+    res.json({
+      success: true,
+      data: recentAssessments,
+      count: recentAssessments.length
+    });
+  } catch (error) {
+    console.error('Error fetching recent assessments:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching recent assessments'
+    });
+  }
+});
+
 // @route   GET /api/admin/analytics
 // @desc    Get admin analytics data
 // @access  Admin only
@@ -196,6 +341,7 @@ router.get('/analytics', async (req, res) => {
   try {
     const totalUsers = await User.countDocuments({ isActive: true });
     const totalAssessments = await Assessment.countDocuments();
+    const onlineUsers = await User.countDocuments({ isOnline: true, isActive: true });
 
     // Get assessments with user data
     const assessments = await Assessment.find()
@@ -246,6 +392,7 @@ router.get('/analytics', async (req, res) => {
 
     const analytics = {
       totalUsers,
+      onlineUsers,
       totalAssessments,
       averageRiskScore: assessments.length > 0 ?
         Math.round(assessments.reduce((sum, a) => sum + (a.wellnessIndex || 0), 0) / assessments.length) : 0,
@@ -264,6 +411,87 @@ router.get('/analytics', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error fetching analytics'
+    });
+  }
+});
+
+// @route   POST /api/admin/user
+// @desc    Create a new user
+// @access  Admin only
+router.post('/user', async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+
+    // Hash password
+    const bcrypt = require('bcryptjs');
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    // Create new user
+    const newUser = new User({
+      name,
+      email,
+      passwordHash,
+      role: role || 'user',
+      isActive: true
+    });
+
+    await newUser.save();
+
+    res.status(201).json({
+      success: true,
+      message: 'User created successfully',
+      data: {
+        _id: newUser._id,
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        createdAt: newUser.createdAt
+      }
+    });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error creating user'
+    });
+  }
+});
+
+// @route   DELETE /api/admin/user/:id
+// @desc    Delete a user and all their assessments
+// @access  Admin only
+router.delete('/user/:id', async (req, res) => {
+  try {
+    // First delete all assessments for this user
+    await Assessment.deleteMany({ userId: req.params.id });
+
+    // Then delete the user
+    const user = await User.findByIdAndDelete(req.params.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    res.json({
+      success: true,
+      message: 'User and all associated data deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting user'
     });
   }
 });

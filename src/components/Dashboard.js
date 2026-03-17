@@ -19,8 +19,9 @@ const Dashboard = ({ userId }) => {
   const [newJournal, setNewJournal] = useState('');
 
   useEffect(() => {
-    const fetchAssessmentHistory = async () => {
+    const fetchDashboardData = async () => {
       try {
+        // Load assessment history
         if (isFirebaseConfigured && db) {
           const q = query(collection(db, 'assessments'), where('userId', '==', userId));
           const querySnapshot = await getDocs(q);
@@ -31,11 +32,64 @@ const Dashboard = ({ userId }) => {
           const localHistory = JSON.parse(localStorage.getItem(`mindease_history_${userId}`) || '[]');
           setAssessmentHistory(localHistory);
         }
+
+        // Load dashboard data from localStorage (always load from localStorage for persistence)
+        const localMoodEntries = JSON.parse(localStorage.getItem(`mindease_moods_${userId}`) || '[]');
+        const localGoals = JSON.parse(localStorage.getItem(`mindease_goals_${userId}`) || '[]');
+        const localJournals = JSON.parse(localStorage.getItem(`mindease_journals_${userId}`) || '[]');
+
+        setMoodEntries(localMoodEntries);
+        setGoals(localGoals);
+        setJournals(localJournals);
+
+        // If Firebase is configured, also try to load from Firebase and merge
+        if (isFirebaseConfigured && db) {
+          try {
+            // Load mood entries from Firebase
+            const moodQuery = query(collection(db, 'moods'), where('userId', '==', userId));
+            const moodSnapshot = await getDocs(moodQuery);
+            const firebaseMoods = moodSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Load goals from Firebase
+            const goalsQuery = query(collection(db, 'goals'), where('userId', '==', userId));
+            const goalsSnapshot = await getDocs(goalsQuery);
+            const firebaseGoals = goalsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Load journals from Firebase
+            const journalsQuery = query(collection(db, 'journals'), where('userId', '==', userId));
+            const journalsSnapshot = await getDocs(journalsQuery);
+            const firebaseJournals = journalsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // Merge Firebase data with localStorage (Firebase takes precedence for updates)
+            if (firebaseMoods.length > 0) {
+              setMoodEntries(firebaseMoods);
+              localStorage.setItem(`mindease_moods_${userId}`, JSON.stringify(firebaseMoods));
+            }
+            if (firebaseGoals.length > 0) {
+              setGoals(firebaseGoals);
+              localStorage.setItem(`mindease_goals_${userId}`, JSON.stringify(firebaseGoals));
+            }
+            if (firebaseJournals.length > 0) {
+              setJournals(firebaseJournals);
+              localStorage.setItem(`mindease_journals_${userId}`, JSON.stringify(firebaseJournals));
+            }
+          } catch (firebaseError) {
+            console.error('Error loading Firebase dashboard data:', firebaseError);
+            // Continue with localStorage data
+          }
+        }
       } catch (error) {
-        console.error('Error fetching assessment history:', error);
-        // Fallback to localStorage
+        console.error('Error fetching dashboard data:', error);
+        // Fallback to localStorage only
         const localHistory = JSON.parse(localStorage.getItem(`mindease_history_${userId}`) || '[]');
+        const localMoodEntries = JSON.parse(localStorage.getItem(`mindease_moods_${userId}`) || '[]');
+        const localGoals = JSON.parse(localStorage.getItem(`mindease_goals_${userId}`) || '[]');
+        const localJournals = JSON.parse(localStorage.getItem(`mindease_journals_${userId}`) || '[]');
+
         setAssessmentHistory(localHistory);
+        setMoodEntries(localMoodEntries);
+        setGoals(localGoals);
+        setJournals(localJournals);
       } finally {
         // Always set loading to false, even if there's an error
         setLoading(false);
@@ -47,7 +101,7 @@ const Dashboard = ({ userId }) => {
       setLoading(false);
     }, 5000); // 5 second timeout
 
-    fetchAssessmentHistory();
+    fetchDashboardData();
 
     return () => clearTimeout(timeoutId);
   }, [userId]);
@@ -100,7 +154,10 @@ const Dashboard = ({ userId }) => {
         await addDoc(collection(db, 'moods'), moodData);
       }
       // Update local state
-      setMoodEntries(prev => [moodData, ...prev]);
+      const updatedMoods = [moodData, ...moodEntries];
+      setMoodEntries(updatedMoods);
+      // Save to localStorage for persistence
+      localStorage.setItem(`mindease_moods_${userId}`, JSON.stringify(updatedMoods));
       setShowMoodModal(false);
       setCurrentMood(5);
     } catch (error) {
@@ -122,7 +179,11 @@ const Dashboard = ({ userId }) => {
       if (isFirebaseConfigured && db) {
         await addDoc(collection(db, 'goals'), goalData);
       }
-      setGoals(prev => [goalData, ...prev]);
+      // Update local state
+      const updatedGoals = [goalData, ...goals];
+      setGoals(updatedGoals);
+      // Save to localStorage for persistence
+      localStorage.setItem(`mindease_goals_${userId}`, JSON.stringify(updatedGoals));
       setShowGoalModal(false);
       setNewGoal('');
     } catch (error) {
@@ -143,7 +204,11 @@ const Dashboard = ({ userId }) => {
       if (isFirebaseConfigured && db) {
         await addDoc(collection(db, 'journals'), journalData);
       }
-      setJournals(prev => [journalData, ...prev]);
+      // Update local state
+      const updatedJournals = [journalData, ...journals];
+      setJournals(updatedJournals);
+      // Save to localStorage for persistence
+      localStorage.setItem(`mindease_journals_${userId}`, JSON.stringify(updatedJournals));
       setShowJournalModal(false);
       setNewJournal('');
     } catch (error) {
@@ -156,9 +221,13 @@ const Dashboard = ({ userId }) => {
       if (isFirebaseConfigured && db) {
         await updateDoc(doc(db, 'goals', goalId), { completed: !completed });
       }
-      setGoals(prev => prev.map(goal =>
+      // Update local state
+      const updatedGoals = goals.map(goal =>
         goal.id === goalId ? { ...goal, completed: !completed } : goal
-      ));
+      );
+      setGoals(updatedGoals);
+      // Save to localStorage for persistence
+      localStorage.setItem(`mindease_goals_${userId}`, JSON.stringify(updatedGoals));
     } catch (error) {
       console.error('Error updating goal:', error);
     }
